@@ -17,24 +17,40 @@ import RegFile::*;
 import MemInit::*;
 
 interface DMemory;
-    method ActionValue#(MemResp) req(MemReq r);
+    interface Put#(MemReq) req;
+    interface Get#(MemResp) resp;
     interface MemInitIfc init;
 endinterface
 
 (* synthesize *)
 module mkDMemory(DMemory);
-  RegFile#(Bit#(16), Data) mem <- mkRegFileFull();
-  MemInitIfc memInit <- mkMemInitRegFile(mem);
+  BRAM_Configure cfg = defaultValue;
+  BRAM1Port#(Bit#(16), Data) bram <- mkBRAM1Server(cfg);
+  MemInitIfc memInit <- mkMemInitBRAM(bram);
 
-  method ActionValue#(MemResp) req(MemReq r) if (memInit.done());
-    Bit#(16) index = truncate(r.addr>>2);
-    let data = mem.sub(index);
-    if(r.op==St)
-    begin
-      mem.upd(index, r.data);
-    end
-    return data;
-  endmethod
+  interface Put req;
+    method Action put(MemReq r) if (memInit.done());
+      Bit#(16) addr = truncate(r.addr >> 2);
+      if (r.op == St) begin
+        bram.portA.request.put(BRAMRequest { write: True
+                                           , responseOnWrite: False
+                                           , address: addr
+                                           , datain: r.data });
+      end else begin
+        bram.portA.request.put(BRAMRequest { write: False
+                                           , responseOnWrite: False
+                                           , address: addr
+                                           , datain: r.data });
+      end
+    endmethod
+  endinterface
+
+  interface Get resp;
+    method ActionValue#(MemResp) get() if (memInit.done());
+      let data <- bram.portA.response.get();
+      return data;
+    endmethod
+  endinterface
 
   interface MemInitIfc init = memInit;
 endmodule
