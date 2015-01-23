@@ -15,6 +15,7 @@ import Types::*;
 import MemTypes::*;
 import RegFile::*;
 import MemInit::*;
+import BRAM::*;
 
 interface DMemory;
     interface Put#(MemReq) req;

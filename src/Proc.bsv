@@ -8,8 +8,9 @@ import DMemory::*;
 import Decode::*;
 import Exec::*;
 import Cop::*;
+import GetPut::*;
 
-typedef enum {Fetch, Execute} State deriving (Bits, Eq);
+typedef enum {Fetch1, Fetch2, Execute, Memory} State deriving (Bits, Eq);
 
 (* synthesize *)
 module [Module] mkProc(Proc);
@@ -19,13 +20,20 @@ module [Module] mkProc(Proc);
   DMemory  dMem <- mkDMemory;
   Cop       cop <- mkCop;
   
-  Reg#(State) state <- mkReg(Fetch);
+  Reg#(State) state <- mkReg(Fetch1);
   Reg#(Data)     ir <- mkRegU;
 
   Bool memReady = iMem.init.done() && dMem.init.done();
 
-  rule doFetch(cop.started && state == Fetch);
-    let inst = iMem.req(pc);
+  rule doFetch1(cop.started && state == Fetch1);
+    iMem.req.put(MemReq{op: Ld, addr: pc, data: ?});
+
+    // switch to execute state
+    state <= Fetch2;
+  endrule
+
+  rule doFetch2(cop.started && state == Fetch2);
+    let inst <- iMem.resp.get();
 
     $display("pc: %h inst: (%h) expanded: ", pc, inst, showInst(inst));
 
@@ -56,22 +64,42 @@ module [Module] mkProc(Proc);
 
     if(eInst.iType == Ld)
     begin
-      eInst.data <- dMem.req(MemReq{op: Ld, addr: eInst.addr, data: ?});
+      dMem.req.put(MemReq{op: Ld, addr: eInst.addr, data: ?});
+      state <= Memory;
     end
     else if(eInst.iType == St)
     begin
-      let d <- dMem.req(MemReq{op: St, addr: eInst.addr, data: eInst.data});
+      dMem.req.put(MemReq{op: St, addr: eInst.addr, data: eInst.data});
+      state <= Fetch1;
+    end
+    else
+    begin
+      // switch back to fetch1
+      state <= Fetch1;
     end
 
-    if (isValid(eInst.dst) && validValue(eInst.dst).regType == Normal)
+    if (isValid(eInst.dst) && validValue(eInst.dst).regType == Normal && eInst.iType != Ld)
       rf.wr(validRegValue(eInst.dst), eInst.data);
 
     pc <= eInst.brTaken ? eInst.addr : pc + 4;
 
     cop.wr(eInst.dst, eInst.data);
+  endrule
 
-    // switch back to fetch
-    state <= Fetch;
+  rule doMemory(cop.started && state == Memory);
+    let inst = ir;
+
+    let dInst = decode(inst);
+
+    let data <- dMem.resp.get();
+
+    if (isValid(dInst.dst) && validValue(dInst.dst).regType == Normal && dInst.iType == Ld)
+      rf.wr(validRegValue(dInst.dst), data);
+
+    // switch back to fetch1
+    state <= Fetch1;
+
+    cop.wr(dInst.dst, data);
   endrule
   
   method ActionValue#(Tuple2#(RIndx, Data)) cpuToHost;
