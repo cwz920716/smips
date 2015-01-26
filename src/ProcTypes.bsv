@@ -27,7 +27,7 @@ endinterface
 
 typedef Bit#(5)  RIndx;
 
-typedef enum {Unsupported, Alu, Ld, St, J, Jr, Br, Mfc0, Mtc0} IType deriving(Bits, Eq);
+typedef enum {Unsupported, Alu, Ld, St, J, Jr, Br, Mfc0, Mtc0, Nop} IType deriving(Bits, Eq);
 typedef enum {Eq, Neq, Le, Lt, Ge, Gt, AT, NT} BrFunc deriving(Bits, Eq);
 typedef enum {Add, Sub, And, Or, Xor, Nor, Slt, Sltu, LShift, RShift, Sra} AluFunc deriving(Bits, Eq);
 

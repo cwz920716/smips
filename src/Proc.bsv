@@ -35,14 +35,20 @@ typedef struct {
 	DecodedInst dInst;
         Data rVal1;
         Data rVal2;
+        Data copVal;
 } Issue2Execute deriving (Bits);
 
 typedef struct {
-	ExecInst eInst;
+	Addr pc;
+        IType iType;
+        Maybe#(FullIndx) dst;
+        Data data;
 } Execute2Memory deriving (Bits);
 
 typedef struct {
-	ExecInst eInst;
+	Addr pc;
+        Maybe#(FullIndx) dst;
+        Data data;
 } Memory2WriteBack deriving (Bits);
 
 typedef struct {
@@ -54,7 +60,7 @@ typedef enum {Fetch, Decode, Issue, Execute, Memory, WriteBack} State deriving (
 
 (* synthesize *)
 module [Module] mkProc(Proc);
-  Reg#(Addr) pc <- mkRegU;
+  Reg#(Addr) fPc <- mkRegU;
   RFile      rf <- mkBypassRFile;
   IMemory  iMem <- mkIMemory;
   DMemory  dMem <- mkDMemory;
@@ -78,17 +84,17 @@ module [Module] mkProc(Proc);
   Bool memReady = iMem.init.done() && dMem.init.done();
 
   rule doFetch(cop.started);
-    $display("pc: %h: epoch: %d Eepoch: %h", pc, fEpoch, eEpoch);
+    $display("FE pc: %h: epoch: %d Eepoch: %h\n", fPc, fEpoch, eEpoch);
     if (execRedirect.notEmpty) begin
       fEpoch <= execRedirect.first.epoch;
-      pc <= execRedirect.first.pc;
+      fPc <= execRedirect.first.pc;
       execRedirect.deq;
     end else begin
       // switch to Get state
-      let ppc = addrPred.predPc(pc);
-      pc <= ppc;
-      f2d.enq (Fetch2Decode{pc: pc, ppc: ppc, epoch: fEpoch});
-      iMem.req.put(MemReq{op: Ld, addr: pc, data: ?});
+      let ppc = addrPred.predPc(fPc);
+      fPc <= ppc;
+      f2d.enq (Fetch2Decode {pc: fPc, ppc: ppc, epoch: fEpoch});
+      iMem.req.put(MemReq{op: Ld, addr: fPc, data: ?});
     end
   endrule
 
@@ -99,7 +105,8 @@ module [Module] mkProc(Proc);
     let ppc = f2d.first.ppc;
     let epoch = f2d.first.epoch;
     let dInst = decode(inst);
-    d2i.enq (Decode2Issue{pc: pc, ppc: ppc, epoch: epoch, dInst: dInst});
+    $display("DE pc: %h", pc);
+    d2i.enq (Decode2Issue {pc: pc, ppc: ppc, epoch: epoch, dInst: dInst});
     f2d.deq;
   endrule
 
@@ -108,12 +115,15 @@ module [Module] mkProc(Proc);
     let ppc = d2i.first.ppc;
     let epoch = d2i.first.epoch;
     let dInst = d2i.first.dInst;
-    let stall = sb.search1(dInst.src1) || sb.search2(dInst.src2) || 
-                                       sb.search3(dInst.dst);
+
+    let stall = sb.search1(dInst.src1) || sb.search2(dInst.src2) || sb.search3(dInst.dst);
+    $display("IS pc: %h stall: %h R1: %d R2: %d Rd: %d", pc, stall, validRegValue(dInst.src1), validRegValue(dInst.src2), validRegValue(dInst.dst));
+
     if (!stall) begin
       let rVal1 = rf.rd1(validRegValue(dInst.src1));
       let rVal2 = rf.rd2(validRegValue(dInst.src2));  
-      i2e.enq (Issue2Execute{pc: pc, ppc: ppc, epoch: epoch, dInst: dInst, rVal1: rVal1, rVal2: rVal2});
+      let copVal = cop.rd(validRegValue(dInst.src1));
+      i2e.enq (Issue2Execute {pc: pc, ppc: ppc, epoch: epoch, dInst: dInst, rVal1: rVal1, rVal2: rVal2, copVal: copVal});
       sb.insert(dInst.dst);
       d2i.deq;
     end
@@ -126,12 +136,10 @@ module [Module] mkProc(Proc);
     let dInst = i2e.first.dInst;
     let rVal1 = i2e.first.rVal1;
     let rVal2 = i2e.first.rVal2;
+    let copVal = i2e.first.copVal;
+    $display("EX pc: %h: R1: %d R2: %d Rd: %d", pc, validRegValue(dInst.src1), validRegValue(dInst.src2), validRegValue(dInst.dst));
 
     if (inEp == eEpoch) begin   
-      $display("pc: %h: R1: %h R2: %h", pc, rVal1, rVal2);
-
-      let copVal = cop.rd(validRegValue(dInst.src1));
-
       let eInst = exec(dInst, rVal1, rVal2, pc, ppc, copVal);
 
       if(eInst.iType == Unsupported) begin
@@ -148,34 +156,43 @@ module [Module] mkProc(Proc);
       if (eInst.mispredict) begin
         let newEpoch = eEpoch + 1;
         eEpoch <= newEpoch;
-        execRedirect.enq (ExecuteRedirect{pc: eInst.addr, epoch: newEpoch});
+        execRedirect.enq (ExecuteRedirect {pc: eInst.addr, epoch: newEpoch});
       end
 
-      e2m.enq (Execute2Memory{eInst: eInst});
+      e2m.enq (Execute2Memory{pc: pc, iType: eInst.iType, dst: eInst.dst, data: eInst.data});
+    end else begin
+      e2m.enq (Execute2Memory{pc: pc, iType: Nop, dst: Invalid, data: ?});
     end
 
     i2e.deq;
   endrule
 
   rule doMemory(cop.started && e2m.notEmpty);
-    let eInst = e2m.first.eInst;
+    let iType = e2m.first.iType;
+    let dst = e2m.first.dst;
+    let data = e2m.first.data;
+    let pc = e2m.first.pc;
+    $display("MEM pc: %h", pc);
 
-    if (eInst.iType == Ld) begin
-      eInst.data <- dMem.resp.get();
+    if (iType == Ld) begin
+      data <- dMem.resp.get();
     end
 
-    m2w.enq (Memory2WriteBack{eInst: eInst});
+    m2w.enq (Memory2WriteBack {pc: pc, dst: dst, data: data});
     e2m.deq;
   endrule
 
   rule doWriteBack(cop.started && m2w.notEmpty);
-    let eInst = m2w.first.eInst;
+    let dst = m2w.first.dst;
+    let data = m2w.first.data;
+    let pc = m2w.first.pc;
+    $display("WB pc: %h", pc);
 
-    if (isValid(eInst.dst) && validValue(eInst.dst).regType == Normal) begin
-      rf.wr(validRegValue(eInst.dst), eInst.data);
+    if (isValid(dst) && validValue(dst).regType == Normal) begin
+      rf.wr(validRegValue(dst), data);
     end
 
-    cop.wr(eInst.dst, eInst.data);
+    cop.wr(dst, data);
     m2w.deq;
     sb.remove;
   endrule
@@ -187,7 +204,7 @@ module [Module] mkProc(Proc);
 
   method Action hostToCpu(Bit#(32) startpc) if (!cop.started && memReady);
     cop.start;
-    pc <= startpc;
+    fPc <= startpc;
   endmethod
 
   interface MemInit iMemInit = iMem.init;

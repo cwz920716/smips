@@ -40,7 +40,7 @@ module mkCop(Cop);
 
   rule count (startReg);
      cycles <= cycles + 1;
-     $display("\nCycle %d numInsts %d---------------------------------------------", cycles, numInsts);
+     // $display("Cycle %d---------------------------------------------", cycles);
   endrule
 
   method Action start;
