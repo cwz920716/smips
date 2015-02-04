@@ -73,32 +73,6 @@ typedef struct {
   Bool             brTaken;
 } ExecInst deriving(Bits, Eq);
 
-// Wenzhi Cui
-typedef Bit#(3)  ROBIndx;
-
-typedef struct {
-// enq data
-  IType            iType;
-  AluFunc          aluFunc;
-  BrFunc           brFunc;
-  Maybe#(FullIndx) dst;
-  Maybe#(FullIndx) src1;
-  Maybe#(FullIndx) src2;
-  Maybe#(Data)     imm;
-// (possibly) propogate data
-  Maybe#(ROBIndx)  r1busy;
-  Maybe#(ROBIndx)  r2busy;
-  Maybe#(Data)     r1data;
-  Maybe#(Data)     r2data;
-  Bool             Issued;
-// commit data
-  Bool             Committed;
-  Data             data;
-  Addr             addr;
-  Bool             mispredict;
-  Bool             brTaken;
-} ROBEntry deriving(Bits, Eq);
-
 Bit#(6) opFUNC  = 6'b000000;
 Bit#(6) opRT    = 6'b000001;
 Bit#(6) opRS    = 6'b010000;

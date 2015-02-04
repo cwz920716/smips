@@ -12,8 +12,7 @@ import Fifo::*;
 import GetPut::*;
 import AddrPred::*;
 import Scoreboard::*;
-
-typedef UInt#(4) Epoch;
+import ROB::*;
 
 typedef struct {
 	Addr pc;
