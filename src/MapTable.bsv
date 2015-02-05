@@ -22,38 +22,30 @@ import ProcTypes::*;
 import Vector::*;
 import Ehr::*;
 import ConfigReg::*;
+import ROB::*;
 
-interface RFile;
-    method Action wr( RIndx rindx, Data data );
-    method Data rd1( RIndx rindx );
-    method Data rd2( RIndx rindx );
+interface MapTable;
+    method Action free( RIndx rindx );
+    method Action map( RIndx rindx, ROBIndx rename );
+    method Maybe#(ROBIndx) rd1( RIndx rindx );
+    method Maybe#(ROBIndx) rd2( RIndx rindx );
 endinterface
 
- (* synthesize *)
-module mkRFile( RFile );
-    Vector#(32, Reg#(Data)) rfile <- replicateM(mkConfigReg(0));
+module mkBypassMapTable( MapTable );
+    Vector#(32, Ehr#(2, Maybe#(ROBIndx))) mtable <- replicateM(mkEhr(tagged Invalid));
 
-    function Data read(RIndx rindx);
-        return rfile[rindx];
-    endfunction
-   
-    method Action wr( RIndx rindx, Data data );
-        if(rindx!=0) rfile[rindx] <= data;
-    endmethod
-
-    method Data rd1( RIndx rindx ) = read(rindx);
-    method Data rd2( RIndx rindx ) = read(rindx);
-endmodule
-
-module mkBypassRFile( RFile );
-    Vector#(32, Ehr#(2, Data)) rfile <- replicateM(mkEhr(0));
-
-    method Action wr(RIndx rindx, Data data);
+    method Action free(RIndx rindx);
         if (rindx != 0) begin
-            (rfile[rindx])[0] <= data;
+            (mtable[rindx])[0] <= tagged Invalid;
         end
     endmethod
 
-    method Data rd1(RIndx rindx) = (rfile[rindx])[1];
-    method Data rd2(RIndx rindx) = (rfile[rindx])[1];
+    method Action map(RIndx rindx, ROBIndx rename);
+        if (rindx != 0) begin
+            (mtable[rindx])[1] <= tagged Valid rename;
+        end
+    endmethod
+
+    method Maybe#(ROBIndx) rd1(RIndx rindx) = (mtable[rindx])[1];
+    method Maybe#(ROBIndx) rd2(RIndx rindx) = (mtable[rindx])[1];
 endmodule

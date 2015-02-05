@@ -13,6 +13,7 @@ import GetPut::*;
 import AddrPred::*;
 import Scoreboard::*;
 import ROB::*;
+import MapTable::*;
 
 typedef struct {
 	Addr pc;
