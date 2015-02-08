@@ -38,6 +38,7 @@ typedef struct {
   Maybe#(ROBIndx)  r2busy;
   Data             rVal1;
   Data             rVal2;
+  Data             copVal;
 // commit data
   ExecInst         eInst;
 } ROBEntry deriving(Bits, Eq);
@@ -50,7 +51,7 @@ interface ROB;
   method Action enq(ROBEntry x);
   method Bool notEmpty;
   method Action deq;
-  method ROBEntry first;
+  method Maybe#(ROBEntry) first;
   method Action clear;
   method ROBEntry readyEntry( ROBIndx idx );
   method Maybe#(Data) rdExecData1( ROBIndx idx );
@@ -92,10 +93,18 @@ module mkPipelineROB( ROB ) ;
     return ret;
   endfunction
 
+  rule print;
+    $display("ROB enq %h", enqP[0]%nb);
+    for (ROBIndx i = 0; i < 8; i = i + 1) begin
+      let rs = data[i][0]; // Reservation Station
+      $display("ROB[%h] v %b i %b c %b r1busy %b r2busy %b pc %h", i, valid[i][0], issued[i][0], committed[i][0], isValid(rs.r1busy), isValid(rs.r2busy), rs.pc);
+    end
+  endrule
+
   method Bool notFull = cnt1 < nb;
 
   method ROBIndx nextEntry if(cnt1 < nb);
-    return enqP[0];
+    return enqP[0]%nb;
   endmethod
 
   method Action enq(ROBEntry x) if(cnt1 < nb);
@@ -105,7 +114,7 @@ module mkPipelineROB( ROB ) ;
     valid[next][1] <= True;
     issued[next][1] <= False;
     committed[next][1] <= False;
-    if (x.dInst.iType == St)
+    if (x.dInst.iType == St || x.dInst.iType == Ld)
       hasStore[1] <= True;
   endmethod
 
@@ -116,8 +125,11 @@ module mkPipelineROB( ROB ) ;
     valid[deqP[0]][0] <= False;
   endmethod
 
-  method ROBEntry first if(cnt0 != 0);
-    return data[deqP[0]%nb][0];
+  method Maybe#(ROBEntry) first if(cnt0 != 0);
+    if ( committed[deqP[0]%nb][0] && valid[deqP[0]][0] )
+      return tagged Valid data[deqP[0]%nb][0];
+    else
+      return tagged Invalid;
   endmethod
 
   method Action clear;
@@ -128,46 +140,49 @@ module mkPipelineROB( ROB ) ;
     hasStore[2] <= False;
   endmethod
 
-  method ROBEntry readyEntry( ROBIndx idx ) if(cnt0 != 0);
-    return data[idx][1];
+  method ROBEntry readyEntry( ROBIndx idx );
+    if ( valid[idx][1] && !issued[idx][0] )
+      return data[idx][1];
+    else
+      return ?;
   endmethod
 
-  method Maybe#(Data) rdExecData1( ROBIndx idx ) if(cnt0 != 0);
+  method Maybe#(Data) rdExecData1( ROBIndx idx );
     Maybe#(Data) ret = tagged Invalid;
     if (valid[idx][1] && committed[idx][1])
       ret = tagged Valid data[idx][1].eInst.data;
     return ret;
   endmethod
 
-  method Maybe#(Data) rdExecData2( ROBIndx idx ) if(cnt0 != 0);
+  method Maybe#(Data) rdExecData2( ROBIndx idx );
     Maybe#(Data) ret = tagged Invalid;
     if (valid[idx][1] && committed[idx][1])
       ret = tagged Valid data[idx][1].eInst.data;
     return ret;
   endmethod
 
-  method Bool existStore if(cnt0 != 0);
+  method Bool existStore;
     return hasStore[1];
   endmethod
 
-  method Maybe#(ROBIndx) readyIdx if(cnt0 != 0);
+  method Maybe#(ROBIndx) readyIdx;
     return getReady();
   endmethod
 
-  method Action issue( ROBIndx idx ) if(cnt0 != 0);
+  method Action issue( ROBIndx idx );
     issued[idx][0] <= True;
   endmethod
 
-  method Action commit( ROBIndx idx, ExecInst eInst ) if(cnt0 != 0);
+  method Action commit( ROBIndx idx, ExecInst eInst );
     for (ROBIndx i = 0; i < 8; i = i + 1) begin
       if (i == idx && valid[i][1] && issued[i][0] && !committed[i][0]) begin
         let cre = data[i][0];
         cre.eInst = eInst;
         data[i][0] <= cre;
         committed[i][0] <= True;
-        if (cre.dInst.iType == St && hasStore[0])
+        if ( (cre.dInst.iType == St || cre.dInst.iType == Ld) && hasStore[0] )
           hasStore[0] <= False;
-      end else if (i == idx && valid[i][1] && !issued[i][0]) begin
+      end else if (i != idx && valid[i][1] && !issued[i][0]) begin
         let rs = data[i][0]; // Reservation Station
         let dInst = rs.dInst;
         if ( isValid(dInst.src1) && isValid(rs.r1busy) && validRobValue(rs.r1busy) == idx ) begin
