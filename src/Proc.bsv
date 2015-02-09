@@ -83,8 +83,10 @@ module [Module] mkProc(Proc);
   Fifo#(1, Execute2Memory) e2m <- mkPipelineFifo();
   Fifo#(1, Memory2WriteBack) m2w <- mkPipelineFifo();
   Fifo#(1, ExecuteRedirect) commitRedirect <- mkBypassFifo();
+  Fifo#(1, ExecuteRedirect) regRedirect <- mkBypassFifo();
   
   Reg#(Epoch) fEpoch <- mkReg(0);
+  Reg#(Epoch) rEpoch <- mkReg(0);
   Reg#(Epoch) eEpoch <- mkReg(0);
 
   Bool memReady = iMem.init.done() && dMem.init.done();
@@ -124,54 +126,70 @@ module [Module] mkProc(Proc);
     let epoch = d2r.first.epoch;
     let dInst = d2r.first.dInst;
 
-    // Do some read stuff
-    let name1 = mapTable.rd1(validRegValue(dInst.src1));
-    let sb1 = rob.rdExecData1( validValue(name1) );
-    let rVal1 = rf.rd1(validRegValue(dInst.src1));
-    let r1busy = tagged Invalid;
-    if ( isValid(name1) ) begin
-      if (isValid(sb1)) begin
-        rVal1 = validValue(sb1);
+    $display("try RE pc: %h redirect: %b now.epoch %h ?= eEpoch %h", pc, regRedirect.notEmpty, epoch, rEpoch);
+
+    if (regRedirect.notEmpty) begin
+      rEpoch <= regRedirect.first.epoch;
+      regRedirect.deq;
+    end else begin
+
+      if (epoch == rEpoch) begin
+
+        // Do some read stuff
+        let name1 = mapTable.rd1(validRegValue(dInst.src1));
+        let sb1 = rob.rdExecData1( validValue(name1) );
+        let rVal1 = rf.rd1(validRegValue(dInst.src1));
+        let r1busy = tagged Invalid;
+        if ( isValid(dInst.src1) && isValid(name1) ) begin
+          if (isValid(sb1)) begin
+            rVal1 = validValue(sb1);
+          end else begin
+            rVal1 = ?;
+            r1busy = tagged Valid validValue(name1);
+          end
+        end
+
+        let name2 = mapTable.rd2(validRegValue(dInst.src2));
+        let sb2 = rob.rdExecData2( validValue(name2) );
+        let rVal2 = rf.rd2(validRegValue(dInst.src2));
+        let r2busy = tagged Invalid;
+        if ( isValid(dInst.src2) && isValid(name2) ) begin
+          if (isValid(sb2)) begin
+            rVal2 = validValue(sb2);
+          end else begin
+            rVal2 = ?;
+            r2busy = tagged Valid validValue(name2);
+          end
+        end
+
+        let copVal = cop.rd(validRegValue(dInst.src1));
+
+        let robR1busy = r1busy;
+        let robRVal1 = rVal1;
+        let robR2busy = r2busy;
+        let robRVal2 = rVal2;
+        let robCopVal = copVal;
+
+        Bool isMem = (dInst.iType == Ld) || (dInst.iType == St);
+        Bool stall = rob.existStore && isMem;
+
+        $display("RE pc: %h stall: %b R1busy: %b R2Busy: %b", pc, stall, isValid(robR1busy), isValid(robR2busy));
+        if (!stall && rob.notFull) begin
+          let nextEntry = rob.nextEntry;
+          if (isValid(dInst.dst))
+            mapTable.map( validRegValue(dInst.dst), nextEntry );
+            rob.enq(ROBEntry {pc: pc, ppc: ppc, epoch: epoch, dInst: dInst, r1busy: robR1busy, 
+                              r2busy: robR2busy, rVal1: robRVal1, rVal2: robRVal2, copVal: robCopVal, eInst: ? } );
+            $display("ROB enq %h", nextEntry);
+            d2r.deq;
+        end
+
       end else begin
-        rVal1 = ?;
-        r1busy = tagged Valid validValue(name1);
+        d2r.deq;
       end
+
     end
 
-    let name2 = mapTable.rd1(validRegValue(dInst.src2));
-    let sb2 = rob.rdExecData1( validValue(name2) );
-    let rVal2 = rf.rd1(validRegValue(dInst.src2));
-    let r2busy = tagged Invalid;
-    if ( isValid(name2) ) begin
-      if (isValid(sb2)) begin
-        rVal2 = validValue(sb2);
-      end else begin
-        rVal2 = ?;
-        r2busy = tagged Valid validValue(name2);
-      end
-    end
-
-    let copVal = cop.rd(validRegValue(dInst.src1));
-
-    let robR1busy = r1busy;
-    let robRVal1 = rVal1;
-    let robR2busy = r2busy;
-    let robRVal2 = rVal2;
-    let robCopVal = copVal;
-
-    Bool isMem = (dInst.iType == Ld) || (dInst.iType == St);
-    Bool stall = rob.existStore && isMem;
-
-    $display("RE pc: %h stall: %b R1busy: %b R2Busy: %b", pc, stall, isValid(robR1busy), isValid(robR2busy));
-    if (!stall && rob.notFull) begin
-      let nextEntry = rob.nextEntry;
-      if (isValid(dInst.dst))
-        mapTable.map( validRegValue(dInst.dst), nextEntry );
-      rob.enq(ROBEntry {pc: pc, ppc: ppc, epoch: epoch, dInst: dInst, r1busy: robR1busy, 
-                            r2busy: robR2busy, rVal1: robRVal1, rVal2: robRVal2, copVal: robCopVal, eInst: ? } );
-      $display("ROB enq %h", nextEntry);
-      d2r.deq;
-    end
   endrule
 
   rule doIssue(cop.started);
@@ -204,7 +222,7 @@ module [Module] mkProc(Proc);
 
     if(eInst.iType == Unsupported) begin
       $fwrite(stderr, "Executing unsupported instruction at pc: %x. Exiting\n", pc);
-      $finish;
+      // $finish;
     end
 
     if(eInst.iType == Ld) begin
@@ -248,14 +266,15 @@ module [Module] mkProc(Proc);
 
   rule doCommit(cop.started && rob.notEmpty);
     Maybe#(ROBEntry) committedEntry = rob.first;
+    let deqP = rob.firstIndx;
     if ( isValid(committedEntry) ) begin
       let centry = validValue(committedEntry);
-      $display("CM pc: %h", centry.pc);
+      $display("CM pc: %h mispred %b deqP %h now.epoch %h ?= eEpoch %h", centry.pc, centry.eInst.mispredict, deqP, centry.epoch, eEpoch);
       if (centry.epoch == eEpoch) begin 
         let eInst = centry.eInst;
         if (isValid(eInst.dst) && validValue(eInst.dst).regType == Normal) begin
+          $display("CM ARF[%h] <- %h", validRegValue(eInst.dst), eInst.data);
           rf.wr(validRegValue(eInst.dst), eInst.data);
-          mapTable.free(validRegValue(eInst.dst));
         end
         cop.wr(eInst.dst, eInst.data);
 
@@ -263,6 +282,12 @@ module [Module] mkProc(Proc);
           let newEpoch = eEpoch + 1;
           eEpoch <= newEpoch;
           commitRedirect.enq (ExecuteRedirect {pc: eInst.addr, epoch: newEpoch});
+          regRedirect.enq (ExecuteRedirect {pc: eInst.addr, epoch: newEpoch});
+          mapTable.clear;
+        end else begin
+          if (isValid(eInst.dst) && validValue(eInst.dst).regType == Normal) begin
+            mapTable.free(validRegValue(eInst.dst), deqP);
+          end
         end
       end
       rob.deq;

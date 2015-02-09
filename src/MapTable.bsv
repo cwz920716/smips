@@ -24,28 +24,46 @@ import Ehr::*;
 import ConfigReg::*;
 import ROB::*;
 
+typedef Bit#(6)  MIndx;
+
 interface MapTable;
-    method Action free( RIndx rindx );
+    method Action free( RIndx rindx, ROBIndx rename );
+    method Action clear;
     method Action map( RIndx rindx, ROBIndx rename );
     method Maybe#(ROBIndx) rd1( RIndx rindx );
     method Maybe#(ROBIndx) rd2( RIndx rindx );
 endinterface
 
 module mkBypassMapTable( MapTable );
-    Vector#(32, Ehr#(2, Maybe#(ROBIndx))) mtable <- replicateM(mkEhr(tagged Invalid));
+    Vector#(32, Ehr#(3, Maybe#(ROBIndx))) mtable <- replicateM(mkEhr(tagged Invalid));
+/*
+  rule print;
+    // $display("MT------------------");
+    for (MIndx i = 0; i < 32; i = i + 1) begin
+      let name = (mtable[i])[0];
+      // $display("MapTable[%h] v %b rob %h", i, isValid(name), validValue(name));
+    end
+  endrule
+*/
+    method Action free(RIndx rindx, ROBIndx rename);
+        let name = (mtable[rindx])[1];
+        if ( rindx != 0 && isValid(name) && rename == validValue(name) ) begin
+            (mtable[rindx])[1] <= tagged Invalid;
+        end
+    endmethod
 
-    method Action free(RIndx rindx);
-        if (rindx != 0) begin
-            (mtable[rindx])[0] <= tagged Invalid;
+    method Action clear;
+        for (MIndx i = 0; i < 32; i = i + 1) begin
+            (mtable[i])[0] <= tagged Invalid;
         end
     endmethod
 
     method Action map(RIndx rindx, ROBIndx rename);
         if (rindx != 0) begin
-            (mtable[rindx])[1] <= tagged Valid rename;
+            (mtable[rindx])[2] <= tagged Valid rename;
         end
     endmethod
 
-    method Maybe#(ROBIndx) rd1(RIndx rindx) = (mtable[rindx])[1];
-    method Maybe#(ROBIndx) rd2(RIndx rindx) = (mtable[rindx])[1];
+    method Maybe#(ROBIndx) rd1(RIndx rindx) = (mtable[rindx])[2];
+    method Maybe#(ROBIndx) rd2(RIndx rindx) = (mtable[rindx])[2];
 endmodule
