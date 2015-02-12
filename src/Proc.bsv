@@ -228,7 +228,7 @@ module [Module] mkProc(Proc);
     if(eInst.iType == Ld) begin
       dMem.req.put(MemReq{op: Ld, addr: eInst.addr, data: ?});
     end else if(eInst.iType == St) begin
-      dMem.req.put(MemReq{op: St, addr: eInst.addr, data: eInst.data});
+      // dMem.req.put(MemReq{op: St, addr: eInst.addr, data: eInst.data});
     end
     e2m.enq (Execute2Memory{pc: pc, ppc: ppc, epoch: epoch, eInst: eInst, indx: indx});
 
@@ -277,6 +277,9 @@ module [Module] mkProc(Proc);
           rf.wr(validRegValue(eInst.dst), eInst.data);
         end
         cop.wr(eInst.dst, eInst.data);
+        if(eInst.iType == St) begin
+          dMem.req2.put(MemReq{op: St, addr: centry.eInst.addr, data: centry.eInst.data});
+        end
 
         if (eInst.mispredict) begin
           let newEpoch = eEpoch + 1;

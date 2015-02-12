@@ -51,3 +51,33 @@ module mkMemInitBRAM(BRAM1Port#(Bit#(16), Data) mem, MemInitIfc ifc);
     method Bool done() = initialized;
 
 endmodule
+
+module mkMemInitBRAM2(BRAM2Port#(Bit#(16), Data) mem, MemInitIfc ifc);
+    Reg#(Bool) initialized <- mkReg(False);
+
+    interface Put request;
+        method Action put(MemInit x) if (!initialized);
+          case (x) matches
+            tagged InitLoad .l: begin
+                mem.portA.request.put(BRAMRequest {
+                    write: True,
+                    responseOnWrite: False,
+                    address: truncate(l.addr),
+                    datain: l.data});
+                mem.portB.request.put(BRAMRequest {
+                    write: True,
+                    responseOnWrite: False,
+                    address: truncate(l.addr),
+                    datain: l.data});
+            end
+    
+            tagged InitDone: begin
+                initialized <= True;
+            end
+          endcase
+        endmethod
+    endinterface
+    
+    method Bool done() = initialized;
+
+endmodule

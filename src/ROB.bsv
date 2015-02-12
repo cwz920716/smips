@@ -127,6 +127,9 @@ module mkPipelineROB( ROB ) ;
     deqP[0] <= (deqP[0] + 1)%nb;
     valid[deqP[0]%nb][0] <= False;
     cnt[0] <= cnt[0] - 1;
+    let cre = data[deqP[0]%nb][0];
+    if ( (cre.dInst.iType == St || cre.dInst.iType == Ld) && hasStore[0] )
+      hasStore[0] <= False;
   endmethod
 
   method Maybe#(ROBEntry) first if(cnt[0] != 0);
@@ -189,8 +192,6 @@ module mkPipelineROB( ROB ) ;
         cre.eInst = eInst;
         data[i][0] <= cre;
         committed[i][0] <= True;
-        if ( (cre.dInst.iType == St || cre.dInst.iType == Ld) && hasStore[0] )
-          hasStore[0] <= False;
       end else if (i != idx && valid[i][1] && !issued[i][0]) begin
         let rs = data[i][0]; // Reservation Station
         let dInst = rs.dInst;
