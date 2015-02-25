@@ -57,6 +57,14 @@ typedef struct {
 
 typedef struct {
 	Addr pc;
+	Addr ppc;
+        Epoch epoch;
+	ExecInst eInst;
+        ROBIndx indx;
+} ALU2WriteBack deriving (Bits);
+
+typedef struct {
+	Addr pc;
         Epoch epoch;
 } ExecuteRedirect deriving (Bits);
 
@@ -80,8 +88,10 @@ module [Module] mkProc(Proc);
   Fifo#(1, Fetch2Decode) f2d <- mkPipelineFifo();
   Fifo#(1, Decode2Reg) d2r <- mkPipelineFifo();
   Fifo#(1, Issue2Execute) i2e <- mkPipelineFifo();
+  Fifo#(1, Issue2Execute) i2a <- mkPipelineFifo();
   Fifo#(1, Execute2Memory) e2m <- mkPipelineFifo();
   Fifo#(1, Memory2WriteBack) m2w <- mkPipelineFifo();
+  Fifo#(1, ALU2WriteBack) a2w <- mkPipelineFifo();
   Fifo#(1, ExecuteRedirect) commitRedirect <- mkBypassFifo();
   Fifo#(1, ExecuteRedirect) regRedirect <- mkBypassFifo();
   
@@ -192,17 +202,31 @@ module [Module] mkProc(Proc);
 
   endrule
 
-  rule doIssue(cop.started);
-    let readyIndx = rob.readyIdx;
-    ROBIndx indx = validValue(readyIndx);
-    ROBEntry entry = rob.readyEntry( indx );
-    $display("try IS: %b %h", isValid(readyIndx), validValue(readyIndx));
+  rule doIssueB(cop.started);
+    let readyIndxB = rob.readyIdxB;
+    ROBIndx indxB = validValue(readyIndxB);
+    ROBEntry entryB = rob.readyEntryB( indxB );
+    $display("try IS-B: Ex %b %h", isValid(readyIndxB), validValue(readyIndxB));
 
-    if ( isValid(readyIndx) ) begin
-      rob.issue( indx );
-      i2e.enq(Issue2Execute { pc: entry.pc, ppc: entry.ppc, epoch: entry.epoch, dInst: entry.dInst,
-                                     rVal1: entry.rVal1, rVal2: entry.rVal2, copVal: entry.copVal, indx: indx});
-      $display("IS pc: %h", entry.pc);
+    if ( isValid(readyIndxB) ) begin
+      rob.issueB( indxB );
+      i2e.enq(Issue2Execute { pc: entryB.pc, ppc: entryB.ppc, epoch: entryB.epoch, dInst: entryB.dInst,
+                                     rVal1: entryB.rVal1, rVal2: entryB.rVal2, copVal: entryB.copVal, indx: indxB});
+      $display("IS-B pc: %h", entryB.pc);
+    end
+  endrule
+
+  rule doIssueA(cop.started);
+    let readyIndxA = rob.readyIdxA;
+    ROBIndx indxA = validValue(readyIndxA);
+    ROBEntry entryA = rob.readyEntryA( indxA );
+    $display("try IS-A: ALU %b %h", isValid(readyIndxA), validValue(readyIndxA));
+
+    if ( isValid(readyIndxA) ) begin
+      rob.issueA( indxA );
+      i2a.enq(Issue2Execute { pc: entryA.pc, ppc: entryA.ppc, epoch: entryA.epoch, dInst: entryA.dInst,
+                                     rVal1: entryA.rVal1, rVal2: entryA.rVal2, copVal: entryA.copVal, indx: indxA});
+      $display("IS-A pc: %h", entryA.pc);
     end
   endrule
 
@@ -235,6 +259,29 @@ module [Module] mkProc(Proc);
     i2e.deq;
   endrule
 
+  rule doALU(cop.started && i2a.notEmpty);
+    let pc = i2a.first.pc;
+    let ppc = i2a.first.ppc;
+    let epoch = i2a.first.epoch;
+    let inEp = i2a.first.epoch;
+    let dInst = i2a.first.dInst;
+    let rVal1 = i2a.first.rVal1;
+    let rVal2 = i2a.first.rVal2;
+    let copVal = i2a.first.copVal;
+    let indx = i2a.first.indx;
+    $display("ALU pc: %h: R1: %d R2: %d Rd: %d", pc, validRegValue(dInst.src1), validRegValue(dInst.src2), validRegValue(dInst.dst));
+
+    let eInst = exec(dInst, rVal1, rVal2, pc, ppc, copVal);
+
+    if(eInst.iType == Unsupported) begin
+      $fwrite(stderr, "Executing unsupported instruction at pc: %x. Exiting\n", pc);
+      // $finish;
+    end
+    a2w.enq (ALU2WriteBack{pc: pc, ppc: ppc, epoch: epoch, eInst: eInst, indx: indx});
+
+    i2a.deq;
+  endrule
+
   rule doMemory(cop.started && e2m.notEmpty);
     let pc = e2m.first.pc;
     let ppc = e2m.first.ppc;
@@ -252,16 +299,28 @@ module [Module] mkProc(Proc);
     e2m.deq;
   endrule
 
-  rule doWriteBack(cop.started && m2w.notEmpty);
+  rule doWriteBackB(cop.started && m2w.notEmpty);
     let pc = m2w.first.pc;
     let ppc = m2w.first.ppc;
     let epoch = m2w.first.epoch;
     let eInst = m2w.first.eInst;
     let indx = m2w.first.indx;
-    $display("WB pc: %h", pc);
+    $display("WB-B pc: %h", pc);
 
-    rob.commit( indx, eInst );
+    rob.commitB( indx, eInst );
     m2w.deq;
+  endrule
+
+  rule doWriteBackA(cop.started && a2w.notEmpty);
+    let pc = a2w.first.pc;
+    let ppc = a2w.first.ppc;
+    let epoch = a2w.first.epoch;
+    let eInst = a2w.first.eInst;
+    let indx = a2w.first.indx;
+    $display("WB-A pc: %h", pc);
+
+    rob.commitA( indx, eInst );
+    a2w.deq;
   endrule
 
   rule doCommit(cop.started && rob.notEmpty);
