@@ -181,7 +181,7 @@ module mkPipelineROB( ROB ) ;
     end
     return ret;
   endfunction
-
+/*
   rule print;
     $display("ROB enqP %h, deqP %h cnt %h", enqP[0], deqP[0], cnt[0]);
     for (ROBIndx i = 0; i < 8; i = i + 1) begin
@@ -189,7 +189,7 @@ module mkPipelineROB( ROB ) ;
       $display("ROB[%h] v %b i %b c %b r1busy %b r2busy %b pc %h", i, valid[i][0], issued[i][0], committed[i][0], isValid(rs.r1busy), isValid(rs.r2busy), rs.pc);
     end
   endrule
-
+*/
   method Bool notFull = cnt[1] < nb;
 
   method ROBIndx nextEntry if(cnt[1] < nb);

@@ -81,7 +81,7 @@ module [Module] mkProc(Proc);
   // Reg#(State) state <- mkReg(Fetch1);
   // Reg#(Data)     ir <- mkRegU;
 
-  AddrPred addrPred <- mkBtb;
+  AddrPred addrPred <- mkBypassBtb;
   MapTable mapTable <- mkBypassMapTable;
   ROB rob <- mkPipelineROB;  
 
@@ -272,7 +272,7 @@ module [Module] mkProc(Proc);
     $display("ALU pc: %h: R1: %d R2: %d Rd: %d", pc, validRegValue(dInst.src1), validRegValue(dInst.src2), validRegValue(dInst.dst));
 
     let eInst = exec(dInst, rVal1, rVal2, pc, ppc, copVal);
-
+/*
     Redirect redirect;
     redirect.pc = pc;
     redirect.nextPc = eInst.addr;
@@ -280,7 +280,7 @@ module [Module] mkProc(Proc);
     redirect.taken = eInst.brTaken;
     redirect.mispredict = eInst.mispredict;
     addrPred.update(redirect);
-
+*/
     if(eInst.iType == Unsupported) begin
       $fwrite(stderr, "Executing unsupported instruction at pc: %x. Exiting\n", pc);
       // $finish;
@@ -347,6 +347,14 @@ module [Module] mkProc(Proc);
         if(eInst.iType == St) begin
           dMem.req2.put(MemReq{op: St, addr: centry.eInst.addr, data: centry.eInst.data});
         end
+
+        Redirect redirect;
+        redirect.pc = centry.pc;
+        redirect.nextPc = eInst.addr;
+        redirect.brType = eInst.iType;
+        redirect.taken = eInst.brTaken;
+        redirect.mispredict = eInst.mispredict;
+        addrPred.update(redirect);
 
         if (eInst.mispredict) begin
           let newEpoch = eEpoch + 1;

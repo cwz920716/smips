@@ -15,6 +15,7 @@ import Types::*;
 import ProcTypes::*;
 import RegFile::*;
 import Vector::*;
+import Ehr::*;
 
 interface AddrPred;
   method Addr predPc(Addr pc);
@@ -59,6 +60,39 @@ module mkBtb(AddrPred);
       validArr[index] <= True;
       tagArr.upd(index, tag);
       arr.upd(index, rd.nextPc);
+    end
+  endmethod
+endmodule
+
+(* synthesize *)
+module mkBypassBtb(AddrPred);
+  // RegFile#(BtbIndex, Addr) arr <- mkRegFileFull;
+  // RegFile#(BtbIndex, BtbTag) tagArr <- mkRegFileFull;
+  // Vector#(BtbEntries, Reg#(Bool)) validArr <- replicateM(mkReg(False));
+  Vector#(BtbEntries, Ehr#(2, Addr)) arr <- replicateM(mkEhr(?));
+  Vector#(BtbEntries, Ehr#(2, BtbTag)) tagArr <- replicateM(mkEhr(?));
+  Vector#(BtbEntries, Ehr#(2, Bool)) validArr <- replicateM(mkEhr(False));
+
+  function BtbIndex getIndex(Addr pc) = truncate(pc >> 2);
+  function BtbTag getTag(Addr pc) = truncateLSB(pc); 
+
+  method Addr predPc(Addr pc);
+    BtbIndex index = getIndex(pc);
+    BtbTag tag = getTag(pc);
+    if(validArr[index][1] && tag == tagArr[index][1])
+      return arr[index][1];
+    else
+      return (pc + 4);
+  endmethod
+
+  method Action update(Redirect rd);
+    if(rd.taken && rd.brType == Br)
+    begin
+      let index = getIndex(rd.pc);
+      let tag = getTag(rd.pc);
+      validArr[index][0] <= True;
+      tagArr[index][0] <= tag;
+      arr[index][0] <= rd.nextPc;
     end
   endmethod
 endmodule
