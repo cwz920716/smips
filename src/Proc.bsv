@@ -81,7 +81,7 @@ module [Module] mkProc(Proc);
   // Reg#(State) state <- mkReg(Fetch1);
   // Reg#(Data)     ir <- mkRegU;
 
-  AddrPred addrPred <- mkPcPlus4;
+  AddrPred addrPred <- mkBtb;
   MapTable mapTable <- mkBypassMapTable;
   ROB rob <- mkPipelineROB;  
 
@@ -272,6 +272,14 @@ module [Module] mkProc(Proc);
     $display("ALU pc: %h: R1: %d R2: %d Rd: %d", pc, validRegValue(dInst.src1), validRegValue(dInst.src2), validRegValue(dInst.dst));
 
     let eInst = exec(dInst, rVal1, rVal2, pc, ppc, copVal);
+
+    Redirect redirect;
+    redirect.pc = pc;
+    redirect.nextPc = eInst.addr;
+    redirect.brType = eInst.iType;
+    redirect.taken = eInst.brTaken;
+    redirect.mispredict = eInst.mispredict;
+    addrPred.update(redirect);
 
     if(eInst.iType == Unsupported) begin
       $fwrite(stderr, "Executing unsupported instruction at pc: %x. Exiting\n", pc);

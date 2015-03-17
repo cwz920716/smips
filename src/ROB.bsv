@@ -268,7 +268,7 @@ module mkPipelineROB( ROB ) ;
   endmethod
 
   method Bool existStore;
-    return ldSt.notEmpty2;
+    return False;
   endmethod
 
   method Maybe#(ROBIndx) readyIdxA;
