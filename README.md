@@ -6,9 +6,10 @@ Author:
   Wenzhi Cui (skeleton code from MIT 6.375)
 
 Includes:
+
   Re-order Buffer using Tomasulo’s Algorithm
 
-  two-way simultaneous issue and write-back (one-way fetch and decode)
+  2-way simultaneous issue and write-back (one-way fetch and decode)
 
   Load/Store Queue
 
