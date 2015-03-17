@@ -1,7 +1,7 @@
 # smips
 Out-of-Order SMIPS Processor in BSV
 
-uthor:
+Author:
 
   Wenzhi Cui (skeleton code from MIT 6.375)
 
